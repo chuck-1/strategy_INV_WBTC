@@ -10,6 +10,9 @@ import "../deps/@openzeppelin/contracts-upgradeable/utils/AddressUpgradeable.sol
 import "../deps/@openzeppelin/contracts-upgradeable/token/ERC20/SafeERC20Upgradeable.sol";
 
 import "../interfaces/badger/IController.sol";
+import "../interfaces/comp/CERC20I.sol";
+import "../interfaces/comp/ComptrollerI.sol";
+import "../interfaces/uniswap/IUniswapRouterV2.sol";
 
 import {BaseStrategy} from "../deps/BaseStrategy.sol";
 
@@ -21,6 +24,14 @@ contract MyStrategy is BaseStrategy {
     // address public want // Inherited from BaseStrategy, the token the strategy wants, swaps into and tries to grow
     address public lpComponent; // Token we provide liquidity with
     address public reward; // Token we farm and swap to want / lpComponent
+    address public constant anWBTC = 0x17786f3813E6bA35343211bd8Fe18EC4de14F28b; //anWBTC address (mints anWBTC)
+    address public constant UNITROLLER =
+        0x4dCf7407AE5C07f8681e1659f626E114A7667339; //Comptroller Inverse's finance's version
+
+    address public constant ROUTER = 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D;
+    address private constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    address private constant INV = 0x41D5D79431A913C4aE7d69a668ecdfE5fF9DFB68;
+    address private constant WBTC = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
 
     // Used to signal to the Badger Tree that rewards where sent to it
     event TreeDistribution(
@@ -63,7 +74,7 @@ contract MyStrategy is BaseStrategy {
 
     // @dev Specify the name of the strategy
     function getName() external pure override returns (string memory) {
-        return "StrategyName";
+        return "Inv_WBTC_Strategy";
     }
 
     // @dev Specify the version of the Strategy, for upgrades
@@ -73,7 +84,7 @@ contract MyStrategy is BaseStrategy {
 
     /// @dev Balance of want currently held in strategy positions
     function balanceOfPool() public view override returns (uint256) {
-        return 0;
+        return IERC20Upgradeable(lpComponent).balanceOf(address(this));
     }
 
     /// @dev Returns true if this strategy requires tending
@@ -112,10 +123,14 @@ contract MyStrategy is BaseStrategy {
     /// @dev invest the amount of want
     /// @notice When this function is called, the controller has already sent want to this
     /// @notice Just get the current balance and then invest accordingly
-    function _deposit(uint256 _amount) internal override {}
+    function _deposit(uint256 _amount) internal override {
+        CERC20(anWBTC).mint(_amount);
+    }
 
     /// @dev utility function to withdraw everything for migration
-    function _withdrawAll() internal override {}
+    function _withdrawAll() internal override {
+        CERC20(anWBTC).redeem(balanceOfPool());
+    }
 
     /// @dev withdraw the specified amount of want, liquidate from lpComponent to want, paying off any necessary debt for the conversion
     function _withdrawSome(uint256 _amount)
@@ -123,6 +138,11 @@ contract MyStrategy is BaseStrategy {
         override
         returns (uint256)
     {
+        if (_amount > balanceOfPool()) {
+            _amount = balanceOfPool();
+        }
+
+        CERC20(anWBTC).redeemUnderlying(_amount);
         return _amount;
     }
 
@@ -134,8 +154,32 @@ contract MyStrategy is BaseStrategy {
 
         // Write your code here
 
-        uint256 earned =
-            IERC20Upgradeable(want).balanceOf(address(this)).sub(_before);
+        address[] memory assets = new address[](1);
+        assets[1] = lpComponent;
+
+        ComptrollerI(UNITROLLER).claimComp(address(this));
+        uint256 rewardsAmount =
+            IERC20Upgradeable(reward).balanceOf(address(this));
+
+        if (rewardsAmount == 0) {
+            return 0;
+        }
+
+        //swap reward token (inv) > WETH > WBTC
+        // IUniswapRouterV2.swapExactTokensForTokens(rewardsAmount, amountOutMin, path, to, deadline);
+        uint256 earned = IERC20Upgradeable(reward).balanceOf(address(this));
+        //inv to weth to wbtc
+        address[] memory path = new address[](3);
+        path[0] = reward;
+        path[2] = WETH;
+        path[3] = WBTC;
+        IUniswapRouterV2(ROUTER).swapExactTokensForTokens(
+            earned,
+            0,
+            path,
+            address(this),
+            now
+        );
 
         /// @notice Keep this in so you get paid!
         (uint256 governancePerformanceFee, uint256 strategistPerformanceFee) =
@@ -175,6 +219,11 @@ contract MyStrategy is BaseStrategy {
     /// @dev Rebalance, Compound or Pay off debt here
     function tend() external whenNotPaused {
         _onlyAuthorizedActors();
+
+        uint256 toDeposit = balanceOfWant();
+        if (toDeposit > 0) {
+            CERC20(anWBTC).mint(toDeposit);
+        }
     }
 
     /// ===== Internal Helper Functions =====
