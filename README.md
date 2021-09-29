@@ -1,5 +1,9 @@
 # Badger Strategy V1 Brownie Mix
 
+This is a fork of the Badger brownie mix meant to farm inverse finance using the compound interface taking into consideration inverse is a fork of compound
+Core tests and implemenation is missing and should be handled accordingly. 
+
+
 - Video Introduction: https://youtu.be/FVbhgPYW_D0 (note follow installation and setup below before starting the video)
 
 - Example Project: https://github.com/Badger-Finance/wBTC-AAVE-Rewards-Farm-Badger-V1-Strategy
